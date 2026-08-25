@@ -667,21 +667,36 @@ function buildMidi(){
     (nt>>>8)&255,nt&255,(PPQ>>>8)&255,PPQ&255,
     ...tracks.flat()]);
 }
-document.getElementById("keep").addEventListener("click",()=>{
+document.getElementById("keep").addEventListener("click",async ()=>{
   const btn=document.getElementById("keep");
+  const say=(t,ms)=>{ btn.textContent=t;
+    if(ms) setTimeout(()=>btn.textContent="[ keep .mid ]",ms); };
   const bytes=buildMidi();
-  if(!bytes){ btn.textContent="[ nothing yet ]";
-    setTimeout(()=>btn.textContent="[ keep .mid ]",1400); return; }
-  const blob=new Blob([bytes],{type:"audio/midi"});
-  const a=document.createElement("a");
-  a.href=URL.createObjectURL(blob);
+  if(!bytes){ say("[ nothing yet ]",1400); return; }
   const hm=new Date();
-  a.download="immanence-"+dayStr.replaceAll("-","")+"-"
+  const name="immanence-"+dayStr.replaceAll("-","")+"-"
     +String(hm.getHours()).padStart(2,"0")+String(hm.getMinutes()).padStart(2,"0")+".mid";
+  /* claude.ai artifact viewer: saves are mediated; elsewhere, plain anchor */
+  const dl=(window.claude&&window.claude.use)? await window.claude.use("downloads") : null;
+  if(dl){
+    try{ await dl.save({filename:name, data:bytes}); say("[ kept ]",1400); }
+    catch(err){
+      if(err&&err.code==="rejected_extension"){
+        /* .mid is outside the viewer's allowlist: same bytes as .mid.txt */
+        try{ await dl.save({filename:name+".txt", data:bytes});
+             say("[ kept — rename to .mid ]",3200); }
+        catch(e2){ say(e2&&e2.code==="declined"?"[ keep .mid ]":"[ unavailable here ]",1600); }
+      } else if(err&&err.code==="declined"){ say("[ keep .mid ]"); }
+      else { say("[ unavailable here ]",1600); }
+    }
+    return;
+  }
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([bytes],{type:"audio/midi"}));
+  a.download=name;
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-  btn.textContent="[ kept ]";
-  setTimeout(()=>btn.textContent="[ keep .mid ]",1400);
+  say("[ kept ]",1400);
 });
 
 /* --------------------------------------------------------------- viz ---- */
