@@ -136,6 +136,11 @@
   <div class="row2"><label for="roll">rolling 3-cell</label><output id="rollV">off</output></div>
   <input type="range" id="roll" min="0" max="100" step="1" value="0" aria-label="Rolling cell level">
 </div>
+<div class="ctl slate">
+  <div class="row2"><label for="aug">augmentation &mdash; the cell &times;8 slower</label><output id="augV">off</output></div>
+  <input type="range" id="aug" min="0" max="100" step="1" value="0"
+         aria-label="Augmentation canon level: the cell in slow motion on tubular bells">
+</div>
 
 <div class="sect">harmony</div>
 <div class="inline">
@@ -145,6 +150,7 @@
     <button data-loop="float" aria-pressed="false">[ float ]</button>
   </div>
   <button class="act" id="cadence">[ sound the cadence ]</button>
+  <button class="act" id="tihai">[ tihai ]</button>
 </div>
 <div class="ctl">
   <div class="row2"><label for="chordlen">bars per chord</label><output id="chordlenV">4</output></div>
@@ -173,6 +179,7 @@
           aria-label="Drift: the piece plays itself">[ &infin; drift ]</button>
   <button class="act" id="keep" aria-label="Download the last five minutes as MIDI">[ keep .mid ]</button>
   <span class="g">the last five minutes</span>
+  <button class="act" id="end" aria-label="End the piece gracefully">[ end ]</button>
 </div>
 
 <script>
@@ -382,10 +389,62 @@ function strike(kind, midi, when, gain, panv, opt, durCap){
 
 /* --------------------------------------------------------- the piece ---- */
 const P = { /* live parameters */
-  bloom:1, canon64:12, roll:0, loop:"axis", chordBars:4,
+  bloom:1, canon64:12, roll:0, aug:0, loop:"axis", chordBars:4,
   vToll:0.7, vChoir:0.55, vStr:0.4, vBass:0.6,
   tempo:120, space:0.35, damp:0.55, drift:true, cadence:false,
 };
+
+/* tides: two very slow cycles, seeded by the day before any weather draws */
+const TIDE1_LEN=800+Math.floor(wrng()*500), TIDE1_PH=wrng()*6.283;
+const TIDE2_LEN=2100+Math.floor(wrng()*900), TIDE2_PH=wrng()*6.283;
+function tide(b){ return 0.5-0.5*Math.cos(2*Math.PI*b/TIDE1_LEN+TIDE1_PH); }
+function tide2(b){ return 0.5-0.5*Math.cos(2*Math.PI*b/TIDE2_LEN+TIDE2_PH); }
+
+/* a performable tihai: three statements landing on a chord boundary */
+let tihaiQ=[], tihaiLand=null;
+function armTihai(){
+  if(tihaiLand!=null) return;
+  const chordBeats=P.chordBars*4;
+  const land=Math.ceil((beat+8.5)/chordBeats)*chordBeats;
+  const start=land-7.0, PH=["B5","G5","E5"].map(p);
+  tihaiQ=[];
+  for(let st=0;st<3;st++)
+    for(let i=0;i<3;i++)
+      tihaiQ.push({b:start+st*2.75+i*0.5, midi:PH[i], g:0.42+0.07*st});
+  tihaiQ.push({b:land, midi:p("E6"), g:0.5, crotale:true});
+  tihaiLand=land;
+}
+
+/* the coda: a performed ending — dissolution, ritard, one last toll */
+let coda=null;
+function codaStep(b){
+  const bars=Math.max(0,(b-coda.start)/4);
+  P.tempo=coda.tempo0*(1-0.16*Math.min(1,bars/coda.bars)); reflect("tempo");
+  if(b%4===0 && b>coda.start){
+    P.bloom=Math.max(1,P.bloom-1); reflect("bloom");
+    P.roll*=0.7; reflect("roll");
+    P.aug*=0.75; reflect("aug");
+    P.vStr*=0.85; reflect("vStr");
+    if(bars>coda.bars-3){ P.vChoir*=0.8; P.vToll*=0.95; }
+  }
+}
+function finishCoda(t0){
+  strike("tubular", p("E3"), t0, 0.9, -0.1);
+  strike("tubular", p("E2"), t0+0.05, 0.5, 0.1);
+  strike("crotale", p("E6"), t0+spb()*0.5, 0.45, 0.3);
+  strike("choir", p("E5"), t0+spb(), 0.35, 0, null, 6.0);
+  visEvents.push({t:t0,kind:"cadence",midi:p("E3")});
+  visEvents.push({t:t0+spb()*0.5,kind:"toll",midi:p("E2")});
+  running=false;
+  setTimeout(()=>{
+    if(ctx){ ctx.onstatechange=null; ctx.suspend(); }
+    const stage=document.getElementById("stage");
+    const b2=document.createElement("button");
+    b2.id="begin"; b2.textContent="[ again ]";
+    b2.addEventListener("click",()=>location.reload());
+    stage.appendChild(b2); b2.focus();
+  }, 9000);
+}
 const manual = new Set();  /* params touched while drift is on */
 
 let beat=0, nextTime=0, chordIdx=0, running=false;
@@ -436,6 +495,28 @@ function scheduleBeat(t0, beatIdx){
     visEvents.push({t:t0+s*sixteenth, kind:"bell", midi});
     visEvents.push({t:t0+s*sixteenth+canonDelay, kind:"canon", midi});
   }
+  /* augmentation canon: the same cell, eight times slower, an octave down,
+     on the tubulars — construction (the bloom mask) applies to it too */
+  if(P.aug>0.02 && beatIdx%2===0){
+    const slot=((beatIdx/2)|0)%8;
+    if(present.has(slot)){
+      strike("tubular", p(cell[slot])-12, t0+drift2, P.aug*0.4, 0.15, 0.75);
+      visEvents.push({t:t0, kind:"aug", midi:p(cell[slot])-12});
+    }
+  }
+  /* the armed tihai: emit any of its notes falling inside this beat */
+  if(tihaiLand!=null){
+    for(const n of tihaiQ){
+      if(n.b>=beatIdx && n.b<beatIdx+1){
+        const tt=t0+(n.b-beatIdx)*spb();
+        strike(n.crotale?"crotale":"handbell", n.midi, tt, n.g, 0.0, n.crotale?null:P.damp);
+        visEvents.push({t:tt, kind:"cadence", midi:n.midi});
+      }
+    }
+    if(beatIdx>=tihaiLand){ tihaiLand=null; tihaiQ=[];
+      const tb=document.getElementById("tihai");
+      tb.disabled=false; tb.textContent="[ tihai ]"; }
+  }
   /* rolling 3-cell */
   if(P.roll>0.02){
     for(let s=0;s<4;s++){
@@ -462,12 +543,16 @@ function scheduleBeat(t0, beatIdx){
 }
 
 function weatherStep(){
+  if(coda) { weather.mode="coda"; return; }
   if(!P.drift) { weather.mode="held"; return; }
+  const td=tide(beat), td2=tide2(beat);
+  if(!manual.has("space")){ P.space=0.24+0.20*td2;
+    if(wetGain) wetGain.gain.value=P.space*0.9; reflect("space"); }
   weather.until--;
   const set=(k,v)=>{ if(!manual.has(k)){ P[k]=v; reflect(k); } };
   if(weather.until<=0){
     const roll=wrng();
-    if(weather.mode!=="recession" && roll<0.18){
+    if(weather.mode!=="recession" && roll<0.10+0.16*(1-td)){
       weather.mode="recession"; weather.until=16+Math.floor(wrng()*8);
       weather.tollGap=2;
     } else if(weather.mode==="recession"){
@@ -483,10 +568,13 @@ function weatherStep(){
   if(weather.mode==="recession"){
     set("bloom", Math.max(2, P.bloom-(wrng()<0.4?1:0)));
     set("roll", Math.max(0, P.roll-0.08));
+    set("aug", Math.max(0, P.aug-0.06));
     set("vStr", Math.max(0.15, P.vStr-0.02));
   } else if(weather.mode==="blooming"){
-    if(wrng()<0.30) set("bloom", Math.min(8, P.bloom+1));
-    if(wrng()<0.18) set("roll", Math.min(0.8, P.roll+0.08));
+    const bloomCap=3+Math.round(5*td);          /* the tide caps the bloom */
+    if(wrng()<0.30) set("bloom", Math.min(bloomCap, P.bloom+1));
+    if(wrng()<0.18) set("roll", Math.min(0.25+0.55*td, P.roll+0.08));
+    if(wrng()<0.10) set("aug", Math.min(0.20+0.45*td, P.aug+0.07));
     if(wrng()<0.12) set("canon64", Math.max(4, Math.min(28, P.canon64+(wrng()<0.5?-1:1))));
     if(wrng()<0.10) set("vStr", Math.min(0.7, P.vStr+0.03));
   }
@@ -498,6 +586,10 @@ function tick(){
   /* after background throttling, jump to now rather than replaying the gap */
   if(nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.1;
   while(nextTime < ctx.currentTime + ahead){
+    if(coda){
+      codaStep(beat);
+      if(beat-coda.start>=coda.bars*4){ finishCoda(nextTime); status(); return; }
+    }
     scheduleBeat(nextTime, beat);
     if(beat%4===0) weatherStep();
     beat++; nextTime+=spb();
@@ -508,7 +600,7 @@ function tick(){
 
 /* ---------------------------------------------------------------- UI ---- */
 const el={};
-["bloom","canon","roll","chordlen","vToll","vChoir","vStr","vBass","tempo",
+["bloom","canon","roll","aug","chordlen","vToll","vChoir","vStr","vBass","tempo",
  "space","damp","cadence","drift","begin","stChord","stLoop","stWeather","status"]
  .forEach(id=>el[id]=document.getElementById(id));
 const out=id=>document.getElementById(id+"V");
@@ -516,6 +608,12 @@ const out=id=>document.getElementById(id+"V");
 const FRAC={0:"unison",4:"1/16",8:"1/8",12:"3/16",16:"1/4",20:"5/16",24:"3/8",28:"7/16",32:"1/2"};
 function reflect(k){
   if(k==="bloom"){ el.bloom.value=P.bloom; out("bloom").textContent=P.bloom+"/8"; }
+  if(k==="aug"){ const e=document.getElementById("aug"); e.value=Math.round(P.aug*100);
+    out("aug").textContent=P.aug<0.02?"off":Math.round(P.aug*100); }
+  if(k==="space"){ el.space.value=Math.round(P.space*100);
+    out("space").textContent=Math.round(P.space*100); }
+  if(k==="tempo"){ el.tempo.value=Math.round(P.tempo);
+    out("tempo").textContent=Math.round(P.tempo); }
   if(k==="canon64"){ el.canon.value=P.canon64;
     out("canon").textContent=FRAC[P.canon64] ?? (P.canon64/16).toFixed(2)+" beat"; }
   if(k==="roll"){ el.roll.value=Math.round(P.roll*100);
@@ -534,6 +632,7 @@ bind("bloom","bloom",v=>v+"/8");
 el.canon.addEventListener("input",()=>{ manual.add("canon64"); P.canon64=+el.canon.value;
   out("canon").textContent=FRAC[P.canon64] ?? (P.canon64/16).toFixed(2)+" beat"; });
 bind("roll","roll",v=>v<0.02?"off":Math.round(v*100),0.01);
+bind("aug","aug",v=>v<0.02?"off":Math.round(v*100),0.01);
 bind("chordlen","chordBars",v=>v);
 bind("vToll","vToll",v=>Math.round(v*100),0.01);
 bind("vChoir","vChoir",v=>Math.round(v*100),0.01);
@@ -551,6 +650,18 @@ document.querySelectorAll(".seg button").forEach(b=>{
   });
 });
 el.cadence.addEventListener("click",()=>{ P.cadence=true; el.cadence.disabled=true; });
+document.getElementById("tihai").addEventListener("click",(e)=>{
+  if(!running||coda) return;
+  armTihai();
+  e.currentTarget.disabled=true; e.currentTarget.textContent="[ tihai — armed ]";
+});
+document.getElementById("end").addEventListener("click",(e)=>{
+  if(!running||coda) return;
+  coda={start:beat+(4-beat%4)%4, bars:10, tempo0:P.tempo};
+  e.currentTarget.disabled=true; e.currentTarget.textContent="[ ending\u2026 ]";
+  document.getElementById("cadence").disabled=true;
+  document.getElementById("tihai").disabled=true;
+});
 el.drift.addEventListener("click",()=>{
   P.drift=!P.drift; el.drift.setAttribute("aria-checked",String(P.drift));
   if(P.drift) manual.clear();
@@ -558,7 +669,9 @@ el.drift.addEventListener("click",()=>{
 
 function status(){
   el.stChord.textContent=chordName();
-  el.stWeather.textContent=P.drift? weather.mode : "held";
+    const td=tide(beat);
+  el.stWeather.textContent=(coda?"coda":P.drift?weather.mode:"held")
+    +(coda?"":td>0.7?" — high tide":td<0.3?" — low tide":"");
 }
 
 el.begin.addEventListener("click", async ()=>{
@@ -715,10 +828,10 @@ function draw(){
   g2.clearRect(0,0,W,H);
   const colors={bell:cssVar("--ochre"), canon:cssVar("--slate"), toll:cssVar("--s1"),
                 roll:cssVar("--s3"), choir:cssVar("--slate"), cadence:cssVar("--ochre"),
-                touch:cssVar("--s1")};
+                touch:cssVar("--s1"), aug:cssVar("--slate")};
   for(let i=live.length-1;i>=0;i--){
     const e=live[i], age=now-e.born,
-          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:e.kind==="touch"?2.2:1.6;
+          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:e.kind==="touch"?2.2:e.kind==="aug"?3.5:1.6;
     if(age>life){ live.splice(i,1); continue; }
     const u=age/life, x=(0.12+0.76*((e.midi%24)/24))*W,
           y=e.kind==="toll"||e.kind==="cadence" ? H*0.8 : H*(0.72-0.5*((e.midi-52)/40));

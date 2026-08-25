@@ -23,6 +23,15 @@ the music is built from steve reich's processes, wearing bells:
   phrase, the bowed bell starts singing it back: the instrument learns by
   listening
 - **[ keep .mid ]** downloads the last five minutes as multitrack midi
+- **[ tihai ]** arms three falling gestures whose fourth attack lands exactly
+  on the next chord boundary
+- **augmentation** plays the cell eight times slower on the tubulars, an
+  octave down — construction applies to it too
+- **[ end ]** performs a real ending: ten bars of dissolution, a ritard, the
+  last toll
+- two **tides** (roughly eight and twenty minutes, seeded by the day) cap how
+  high the bloom climbs, tilt the odds toward recession at low tide, and
+  breathe the reverb
 - the drift is seeded by the date — everyone who leaves it untouched hears
   the same wandering on the same day; `?day=2026-08-25` replays a day
 
