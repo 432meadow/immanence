@@ -741,6 +741,10 @@ el.viz.addEventListener("pointerdown",(e)=>{
   while(tq-six>ctx.currentTime+0.02) tq-=six;
   strike("handbell", midi, tq, 0.5, (u*2-1)*0.5, P.damp);
   hear(midi);
+  /* straight to the live list — the queue is time-ordered and would hold
+     an instant ripple behind already-scheduled future events */
+  live.push({kind:"ripple", midi, born:ctx.currentTime,
+             fx:u, fy:Math.min(1,Math.max(0,(e.clientY-r.top)/r.height))});
   visEvents.push({t:tq, kind:"touch", midi});
 },{passive:true});
 
@@ -847,18 +851,21 @@ function draw(){
   g2.clearRect(0,0,W,H);
   const colors={bell:cssVar("--ochre"), canon:cssVar("--slate"), toll:cssVar("--s1"),
                 roll:cssVar("--s3"), choir:cssVar("--slate"), cadence:cssVar("--ochre"),
-                touch:cssVar("--s1"), aug:cssVar("--slate")};
+                touch:cssVar("--s1"), aug:cssVar("--slate"),
+                ripple:cssVar("--s2")};
   for(let i=live.length-1;i>=0;i--){
     const e=live[i], age=now-e.born,
-          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:e.kind==="touch"?2.2:e.kind==="aug"?3.5:1.6;
+          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:e.kind==="touch"?2.2:e.kind==="aug"?3.5:e.kind==="ripple"?0.8:1.6;
     if(age>life){ live.splice(i,1); continue; }
-    const u=age/life, x=(0.12+0.76*((e.midi%24)/24))*W,
-          y=e.kind==="toll"||e.kind==="cadence" ? H*0.8 : H*(0.72-0.5*((e.midi-52)/40));
+    const u=age/life,
+          x=e.fx!=null ? e.fx*W : (0.12+0.76*((e.midi%24)/24))*W,
+          y=e.fy!=null ? e.fy*H
+            : e.kind==="toll"||e.kind==="cadence" ? H*0.8 : H*(0.72-0.5*((e.midi-52)/40));
     g2.beginPath();
-    const r=reduced? 6*devicePixelRatio : (4+u*(e.kind==="toll"?170:e.kind==="choir"?120:52))*devicePixelRatio;
+    const r=reduced? 6*devicePixelRatio : (4+u*(e.kind==="toll"?170:e.kind==="choir"?120:e.kind==="ripple"?78:52))*devicePixelRatio;
     g2.arc(x,y,r,0,6.284);
     g2.strokeStyle=colors[e.kind]||colors.bell;
-    g2.globalAlpha=(1-u)*(e.kind==="toll"?0.55:e.kind==="touch"?0.85:0.5);
+    g2.globalAlpha=(1-u)*(e.kind==="toll"?0.55:e.kind==="touch"?0.85:e.kind==="ripple"?0.4:0.5);
     g2.lineWidth=(e.kind==="touch"?1.8:1)*devicePixelRatio;
     g2.stroke(); g2.globalAlpha=1;
   }
