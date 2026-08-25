@@ -35,7 +35,6 @@
   h1 { font-size: 16px; font-weight: 400; margin: 0; }
   .g { color: var(--s2); }
   .d3 { color: var(--s3); }
-  .num { font-variant-numeric: tabular-nums; }
 
   #stage { position: relative; border-bottom: 1px solid var(--rule); }
   #viz { display: block; width: 100%; height: 300px; cursor: crosshair; touch-action: manipulation; }
@@ -51,6 +50,10 @@
     font-variant-numeric: tabular-nums; pointer-events: none;
   }
   #status b { color: var(--ochre); font-weight: 400; }
+  #stDay {
+    position: absolute; right: 16px; bottom: 12px; font-size: 13px;
+    color: var(--s3); font-variant-numeric: tabular-nums; pointer-events: none;
+  }
 
   .sect { padding: 14px 16px 4px; color: var(--s2); font-size: 13px;
           border-bottom: 1px solid var(--rule); }
@@ -95,6 +98,7 @@
   }
   .inline { display: flex; gap: 24px; align-items: baseline; flex-wrap: wrap;
             border-bottom: 1px solid var(--rule); padding: 14px 16px; }
+  .inline.between { justify-content: space-between; }
 
   /* coarse pointers: bigger targets, same language */
   @media (pointer: coarse) {
@@ -117,7 +121,8 @@
 
 <div id="stage">
   <canvas id="viz" width="1024" height="300"></canvas>
-  <div id="status" hidden>e minor &middot; <b id="stChord">Em</b> &middot; <span id="stLoop">axis</span> &middot; <span id="stWeather">still</span> &middot; <span class="d3" id="stDay"></span></div>
+  <div id="status" hidden><b id="stChord">Em</b> &middot; <span id="stLoop">axis</span> &middot; <span id="stWeather">still</span></div>
+  <div id="stDay" hidden></div>
   <button id="begin">[ begin ]</button>
 </div>
 
@@ -137,20 +142,22 @@
   <input type="range" id="roll" min="0" max="100" step="1" value="0" aria-label="Rolling cell level">
 </div>
 <div class="ctl slate">
-  <div class="row2"><label for="aug">augmentation &mdash; the cell &times;8 slower</label><output id="augV">off</output></div>
+  <div class="row2"><label for="aug">augmentation &mdash; &times;8 slower</label><output id="augV">off</output></div>
   <input type="range" id="aug" min="0" max="100" step="1" value="0"
          aria-label="Augmentation canon level: the cell in slow motion on tubular bells">
 </div>
 
 <div class="sect">harmony</div>
-<div class="inline">
+<div class="inline between">
   <div class="seg" role="group" aria-label="Chord loop">
     <button data-loop="axis" aria-pressed="true">[ axis ]</button>
     <button data-loop="rise" aria-pressed="false">[ rise ]</button>
     <button data-loop="float" aria-pressed="false">[ float ]</button>
   </div>
-  <button class="act" id="cadence">[ sound the cadence ]</button>
-  <button class="act" id="tihai">[ tihai ]</button>
+  <div class="seg" role="group" aria-label="Gestures">
+    <button class="act" id="cadence">[ cadence ]</button>
+    <button class="act" id="tihai">[ tihai ]</button>
+  </div>
 </div>
 <div class="ctl">
   <div class="row2"><label for="chordlen">bars per chord</label><output id="chordlenV">4</output></div>
@@ -168,7 +175,7 @@
   <input type="range" id="vBass" min="0" max="100" value="60" aria-label="Bass level"></div>
 
 <div class="sect">air</div>
-<div class="ctl"><div class="row2"><label for="tempo">tempo</label><output id="tempoV" class="num">120</output></div>
+<div class="ctl"><div class="row2"><label for="tempo">tempo</label><output id="tempoV">120</output></div>
   <input type="range" id="tempo" min="84" max="138" value="120" aria-label="Tempo in BPM"></div>
 <div class="ctl"><div class="row2"><label for="space">space</label><output id="spaceV">35</output></div>
   <input type="range" id="space" min="0" max="100" value="35" aria-label="Reverb amount"></div>
@@ -179,6 +186,8 @@
           aria-label="Drift: the piece plays itself">[ &infin; drift ]</button>
   <button class="act" id="keep" aria-label="Download the last five minutes as MIDI">[ keep .mid ]</button>
   <span class="g">the last five minutes</span>
+</div>
+<div class="inline">
   <button class="act" id="end" aria-label="End the piece gracefully">[ end ]</button>
 </div>
 
@@ -537,7 +546,8 @@ function scheduleBeat(t0, beatIdx){
     visEvents.push({t:t0, kind:"cadence", midi:p("B2")});
   }
   if(posInChord===chordBeats-1){ /* advance harmony at boundary */
-    if(P.cadence && chordIdx===LOOPS[P.loop].length-1){ P.cadence=false; el.cadence.disabled=false; }
+    if(P.cadence && chordIdx===LOOPS[P.loop].length-1){ P.cadence=false;
+      el.cadence.disabled=false; el.cadence.textContent="[ cadence ]"; }
     chordIdx=(chordIdx+1)%LOOPS[P.loop].length;
   }
 }
@@ -649,7 +659,8 @@ document.querySelectorAll(".seg button").forEach(b=>{
     P.loop=b.dataset.loop; chordIdx=0; el.stLoop.textContent=P.loop;
   });
 });
-el.cadence.addEventListener("click",()=>{ P.cadence=true; el.cadence.disabled=true; });
+el.cadence.addEventListener("click",()=>{ P.cadence=true;
+  el.cadence.disabled=true; el.cadence.textContent="[ cadence \u2014 armed ]"; });
 document.getElementById("tihai").addEventListener("click",(e)=>{
   if(!running||coda) return;
   armTihai();
@@ -708,7 +719,8 @@ el.begin.addEventListener("click", async ()=>{
   dryGain.connect(comp); wetGain.connect(conv); conv.connect(comp); comp.connect(ctx.destination);
   running=true; beat=0; chordIdx=0; nextTime=ctx.currentTime+0.15;
   el.begin.remove(); el.status.hidden=false;
-  document.getElementById("stDay").textContent=dayStr;
+  const sd=document.getElementById("stDay");
+  sd.textContent=dayStr; sd.hidden=false;
   tick(); draw();
 });
 
