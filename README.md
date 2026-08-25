@@ -19,6 +19,12 @@ the music is built from steve reich's processes, wearing bells:
   already implies, never stated by a lead
 - **[ ∞ drift ]** lets the instrument wander on its own: blooming, recession,
   and — rarely — a cadence with the piece's one d♯
+- **touch the field** to strike bells yourself — and if you insist on a
+  phrase, the bowed bell starts singing it back: the instrument learns by
+  listening
+- **[ keep .mid ]** downloads the last five minutes as multitrack midi
+- the drift is seeded by the date — everyone who leaves it untouched hears
+  the same wandering on the same day; `?day=2026-08-25` replays a day
 
 no dependencies, no build, no server. open `index.html` or serve it from
 anywhere static.

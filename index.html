@@ -38,7 +38,7 @@
   .num { font-variant-numeric: tabular-nums; }
 
   #stage { position: relative; border-bottom: 1px solid var(--rule); }
-  #viz { display: block; width: 100%; height: 300px; }
+  #viz { display: block; width: 100%; height: 300px; cursor: crosshair; touch-action: manipulation; }
   #begin {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     background: transparent; border: 0; cursor: pointer; color: var(--s1);
@@ -117,7 +117,7 @@
 
 <div id="stage">
   <canvas id="viz" width="1024" height="300"></canvas>
-  <div id="status" hidden>e minor &middot; <b id="stChord">Em</b> &middot; <span id="stLoop">axis</span> &middot; <span id="stWeather">still</span></div>
+  <div id="status" hidden>e minor &middot; <b id="stChord">Em</b> &middot; <span id="stLoop">axis</span> &middot; <span id="stWeather">still</span> &middot; <span class="d3" id="stDay"></span></div>
   <button id="begin">[ begin ]</button>
 </div>
 
@@ -171,6 +171,8 @@
 <div class="inline">
   <button class="switch" id="drift" role="switch" aria-checked="true"
           aria-label="Drift: the piece plays itself">[ &infin; drift ]</button>
+  <button class="act" id="keep" aria-label="Download the last five minutes as MIDI">[ keep .mid ]</button>
+  <span class="g">the last five minutes</span>
 </div>
 
 <script>
@@ -200,6 +202,40 @@ const CHORD = {
   B: { pad:["F#3","B3","D#4","C#5"],root:"B2", bass:"B2", choir:"D#5" },
 };
 const LOOPS = { axis:["Em","C","G","D"], rise:["C","D","Em","Em"], float:["Em","D","C","D"] };
+
+/* ---- today's weather: drift decisions are seeded by the date, so an
+   untouched instrument wanders the same way for everyone on the same day.
+   ?day=YYYY-MM-DD replays another day. ---- */
+function fnv(str){ let h=2166136261;
+  for(const c of str){ h^=c.charCodeAt(0); h=Math.imul(h,16777619); } return h>>>0; }
+function mulberry32(a){ return function(){ a|=0; a=(a+0x6D2B79F5)|0;
+  let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t;
+  return ((t^(t>>>14))>>>0)/4294967296; }; }
+const dayStr=(new URLSearchParams(location.search).get("day")||(()=>{
+  const d=new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+})()).slice(0,10);
+const wrng=mulberry32(fnv("immanence:"+dayStr));
+
+/* ---- the tape: everything played, for [ keep .mid ] ---- */
+const tape=[];
+
+/* ---- the instrument listens: touched pitches accumulate, decay, and pull
+   the resultant voice toward what the player keeps playing ---- */
+const heard={}; let heardTotal=0, curResultant=null;
+function hear(midi){ heard[midi]=(heard[midi]||0)+1; heardTotal+=1; }
+function topHeard(){ let bp=null,bw=0;
+  for(const k in heard) if(heard[k]>bw){ bw=heard[k]; bp=+k; } return bp; }
+function decayHeard(){ heardTotal=0;
+  for(const k in heard){ heard[k]*=0.88;
+    if(heard[k]<0.2) delete heard[k]; else heardTotal+=heard[k]; } }
+function resultantPitch(ch){
+  const th=topHeard();
+  if(th!=null && heardTotal>=2.5 && Math.random()<Math.min(0.85,heardTotal/10)){
+    let m=th; while(m>81)m-=12; while(m<62)m+=12; return m;
+  }
+  return p(CHORD[ch].choir);
+}
 const BLOOM_ORDER = [0,4,2,6,1,5,3,7];
 const ROLL_CELL = ["E5","B5","E6"];
 
@@ -330,6 +366,8 @@ function getBuffer(kind, midi, opt){
 }
 function strike(kind, midi, when, gain, panv, opt, durCap){
   const b=getBuffer(kind, midi, opt);
+  tape.push({t:when, kind, midi, v:gain, d:durCap||Math.min(b.duration,6)});
+  if(tape.length>24000) tape.splice(0,4000);
   const src=ctx.createBufferSource(); src.buffer=b;
   src.playbackRate.value=Math.pow(2,(Math.random()*6-3)/1200); /* shimmer */
   const g=ctx.createGain(); g.gain.value=gain;
@@ -369,12 +407,14 @@ function scheduleBeat(t0, beatIdx){
   /* chord boundary: pads, bass, choir, toll root */
   if(posInChord===0){
     const C=CHORD[ch];
+    curResultant=resultantPitch(ch);
+    decayHeard();
     if(P.vStr>0.02) C.pad.forEach((nm,i)=>
       strike("strings", p(nm), t0+0.01*i, P.vStr*0.16, (i%2? 0.5:-0.5), null, chordBeats*spb()));
     if(P.vBass>0.02) strike("reed", p(C.bass), t0, P.vBass*0.30, 0, null, chordBeats*spb()*0.95);
     if(P.vChoir>0.02){
-      strike("choir", p(C.choir), t0+spb()*0.5, P.vChoir*0.42, 0.15, null, chordBeats*spb());
-      visEvents.push({t:t0+spb()*0.8, kind:"choir", midi:p(C.choir)});
+      strike("choir", curResultant, t0+spb()*0.5, P.vChoir*0.42, 0.15, null, chordBeats*spb());
+      visEvents.push({t:t0+spb()*0.8, kind:"choir", midi:curResultant});
     }
   }
   /* toll on bar downbeats (weather can thin it) */
@@ -407,7 +447,7 @@ function scheduleBeat(t0, beatIdx){
   }
   /* sparse crotale shimmer over the choir tone */
   if(P.vChoir>0.05 && Math.random()<0.06){
-    strike("crotale", p(CHORD[ch].choir)+12, t0+Math.floor(Math.random()*4)*sixteenth, 0.10, -0.65);
+    strike("crotale", (curResultant??p(CHORD[ch].choir))+12, t0+Math.floor(Math.random()*4)*sixteenth, 0.10, -0.65);
   }
   /* cadence: the one D#, then release */
   if(P.cadence && chordIdx===LOOPS[P.loop].length-1 && posInChord===0){
@@ -426,29 +466,29 @@ function weatherStep(){
   weather.until--;
   const set=(k,v)=>{ if(!manual.has(k)){ P[k]=v; reflect(k); } };
   if(weather.until<=0){
-    const roll=Math.random();
+    const roll=wrng();
     if(weather.mode!=="recession" && roll<0.18){
-      weather.mode="recession"; weather.until=16+Math.floor(Math.random()*8);
+      weather.mode="recession"; weather.until=16+Math.floor(wrng()*8);
       weather.tollGap=2;
     } else if(weather.mode==="recession"){
-      weather.mode="blooming"; weather.until=24+Math.floor(Math.random()*24);
+      weather.mode="blooming"; weather.until=24+Math.floor(wrng()*24);
       weather.tollGap=1;
     } else if(roll>0.9 && !P.cadence){
       P.cadence=true; el.cadence.disabled=true;
       weather.mode="cadence"; weather.until=P.chordBars*4*LOOPS[P.loop].length/4;
     } else {
-      weather.mode="blooming"; weather.until=16+Math.floor(Math.random()*24);
+      weather.mode="blooming"; weather.until=16+Math.floor(wrng()*24);
     }
   }
   if(weather.mode==="recession"){
-    set("bloom", Math.max(2, P.bloom-(Math.random()<0.4?1:0)));
+    set("bloom", Math.max(2, P.bloom-(wrng()<0.4?1:0)));
     set("roll", Math.max(0, P.roll-0.08));
     set("vStr", Math.max(0.15, P.vStr-0.02));
   } else if(weather.mode==="blooming"){
-    if(Math.random()<0.30) set("bloom", Math.min(8, P.bloom+1));
-    if(Math.random()<0.18) set("roll", Math.min(0.8, P.roll+0.08));
-    if(Math.random()<0.12) set("canon64", Math.max(4, Math.min(28, P.canon64+(Math.random()<0.5?-1:1))));
-    if(Math.random()<0.10) set("vStr", Math.min(0.7, P.vStr+0.03));
+    if(wrng()<0.30) set("bloom", Math.min(8, P.bloom+1));
+    if(wrng()<0.18) set("roll", Math.min(0.8, P.roll+0.08));
+    if(wrng()<0.12) set("canon64", Math.max(4, Math.min(28, P.canon64+(wrng()<0.5?-1:1))));
+    if(wrng()<0.10) set("vStr", Math.min(0.7, P.vStr+0.03));
   }
 }
 
@@ -555,7 +595,93 @@ el.begin.addEventListener("click", async ()=>{
   dryGain.connect(comp); wetGain.connect(conv); conv.connect(comp); comp.connect(ctx.destination);
   running=true; beat=0; chordIdx=0; nextTime=ctx.currentTime+0.15;
   el.begin.remove(); el.status.hidden=false;
+  document.getElementById("stDay").textContent=dayStr;
   tick(); draw();
+});
+
+/* ------------------------------------------------- play it by touch ---- */
+const STRIKE_SCALE=["E4","F#4","G4","A4","B4","C5","D5","E5","F#5","G5","A5","B5","C6","D6","E6"].map(p);
+document.getElementById("viz").addEventListener("pointerdown",(e)=>{
+  if(!running) return;
+  const r=e.currentTarget.getBoundingClientRect();
+  const u=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));
+  const midi=STRIKE_SCALE[Math.min(STRIKE_SCALE.length-1,Math.floor(u*STRIKE_SCALE.length))];
+  /* quantize to the next 16th of the already-scheduled grid: always lands */
+  const six=spb()/4;
+  let tq=nextTime;
+  while(tq-six>ctx.currentTime+0.02) tq-=six;
+  strike("handbell", midi, tq, 0.5, (u*2-1)*0.5, P.damp);
+  hear(midi);
+  visEvents.push({t:tq, kind:"touch", midi});
+},{passive:true});
+
+/* ------------------------------------------------------- [ keep .mid ] ---- */
+const PPQ=960;
+function vlq(n){ const out=[n&0x7F]; n>>>=7;
+  while(n){ out.push((n&0x7F)|0x80); n>>>=7; } return out.reverse(); }
+function trackChunk(name,events){
+  const body=[]; const nm=Array.from(new TextEncoder().encode(name)).slice(0,60);
+  body.push(...vlq(0),0xFF,0x03,nm.length,...nm);
+  let t=0;
+  for(const [tick,ord,data] of events.sort((a,b)=>a[0]-b[0]||a[1]-b[1])){
+    body.push(...vlq(Math.max(0,tick-t)),...data); t=tick;
+  }
+  body.push(...vlq(0),0xFF,0x2F,0x00);
+  const L=body.length;
+  return [0x4D,0x54,0x72,0x6B,(L>>>24)&255,(L>>>16)&255,(L>>>8)&255,L&255,...body];
+}
+function buildMidi(){
+  const now=ctx?ctx.currentTime:0;
+  const ev=tape.filter(e=>e.t>=now-300 && e.t<=now+0.5);
+  if(ev.length<4) return null;
+  const t0=Math.min(...ev.map(e=>e.t));
+  const tps=P.tempo/60*PPQ;
+  const us=Math.round(60000000/P.tempo);
+  const tracks=[trackChunk("immanence "+dayStr,
+    [[0,0,[0xFF,0x51,0x03,(us>>>16)&255,(us>>>8)&255,us&255]]])];
+  for(const k of [...new Set(ev.map(e=>e.kind))]){
+    const notes=ev.filter(e=>e.kind===k).map(e=>{
+      const a=Math.max(0,Math.round((e.t-t0)*tps));
+      return [a, Math.max(a+1,Math.round((e.t-t0+Math.min(e.d,8))*tps)),
+              Math.max(0,Math.min(127,Math.round(e.midi))), e.v];
+    }).sort((x,y)=>x[0]-y[0]||x[2]-y[2]);
+    const gmax=Math.max(1e-6,...notes.map(n=>n[3]));
+    const last={}, keep=[];
+    for(const n of notes){                 /* same-pitch overlap repair */
+      const pv=last[n[2]];
+      if(pv){ if(pv[0]===n[0]){ pv[3]=Math.max(pv[3],n[3]); continue; }
+              if(pv[1]>n[0]) pv[1]=n[0]; }
+      last[n[2]]=n; keep.push(n);
+    }
+    const evs=[];
+    for(const [a,b,pitch,g] of keep){
+      const vel=Math.max(1,Math.min(127,
+        Math.round(110+20*Math.log10(Math.max(1e-4,g/gmax))*(10/3))));
+      evs.push([a,1,[0x90,pitch,vel]]);
+      evs.push([b,0,[0x80,pitch,64]]);
+    }
+    tracks.push(trackChunk(k,evs));
+  }
+  const nt=tracks.length;
+  return new Uint8Array([0x4D,0x54,0x68,0x64,0,0,0,6,0,1,
+    (nt>>>8)&255,nt&255,(PPQ>>>8)&255,PPQ&255,
+    ...tracks.flat()]);
+}
+document.getElementById("keep").addEventListener("click",()=>{
+  const btn=document.getElementById("keep");
+  const bytes=buildMidi();
+  if(!bytes){ btn.textContent="[ nothing yet ]";
+    setTimeout(()=>btn.textContent="[ keep .mid ]",1400); return; }
+  const blob=new Blob([bytes],{type:"audio/midi"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  const hm=new Date();
+  a.download="immanence-"+dayStr.replaceAll("-","")+"-"
+    +String(hm.getHours()).padStart(2,"0")+String(hm.getMinutes()).padStart(2,"0")+".mid";
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  btn.textContent="[ kept ]";
+  setTimeout(()=>btn.textContent="[ keep .mid ]",1400);
 });
 
 /* --------------------------------------------------------------- viz ---- */
@@ -573,10 +699,11 @@ function draw(){
   }
   g2.clearRect(0,0,W,H);
   const colors={bell:cssVar("--ochre"), canon:cssVar("--slate"), toll:cssVar("--s1"),
-                roll:cssVar("--s3"), choir:cssVar("--slate"), cadence:cssVar("--ochre")};
+                roll:cssVar("--s3"), choir:cssVar("--slate"), cadence:cssVar("--ochre"),
+                touch:cssVar("--s1")};
   for(let i=live.length-1;i>=0;i--){
     const e=live[i], age=now-e.born,
-          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:1.6;
+          life=e.kind==="toll"?4.5:e.kind==="cadence"?6:e.kind==="choir"?5:e.kind==="touch"?2.2:1.6;
     if(age>life){ live.splice(i,1); continue; }
     const u=age/life, x=(0.12+0.76*((e.midi%24)/24))*W,
           y=e.kind==="toll"||e.kind==="cadence" ? H*0.8 : H*(0.72-0.5*((e.midi-52)/40));
@@ -584,8 +711,8 @@ function draw(){
     const r=reduced? 6*devicePixelRatio : (4+u*(e.kind==="toll"?170:e.kind==="choir"?120:52))*devicePixelRatio;
     g2.arc(x,y,r,0,6.284);
     g2.strokeStyle=colors[e.kind]||colors.bell;
-    g2.globalAlpha=(1-u)*(e.kind==="toll"?0.55:0.5);
-    g2.lineWidth=1*devicePixelRatio;
+    g2.globalAlpha=(1-u)*(e.kind==="toll"?0.55:e.kind==="touch"?0.85:0.5);
+    g2.lineWidth=(e.kind==="touch"?1.8:1)*devicePixelRatio;
     g2.stroke(); g2.globalAlpha=1;
   }
   requestAnimationFrame(draw);
