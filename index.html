@@ -141,8 +141,8 @@
 <div class="sect">voices</div>
 <div class="ctl"><div class="row2"><label for="vToll">toll</label><output id="vTollV">70</output></div>
   <input type="range" id="vToll" min="0" max="100" value="70" aria-label="Toll level"></div>
-<div class="ctl"><div class="row2"><label for="vChoir">high strings &mdash; the resultant</label><output id="vChoirV">55</output></div>
-  <input type="range" id="vChoir" min="0" max="100" value="55" aria-label="High strings level"></div>
+<div class="ctl"><div class="row2"><label for="vChoir">bowed bell &mdash; the resultant</label><output id="vChoirV">55</output></div>
+  <input type="range" id="vChoir" min="0" max="100" value="55" aria-label="Bowed bell level"></div>
 <div class="ctl"><div class="row2"><label for="vStr">string bed</label><output id="vStrV">40</output></div>
   <input type="range" id="vStr" min="0" max="100" value="40" aria-label="Strings level"></div>
 <div class="ctl"><div class="row2"><label for="vBass">bass reed</label><output id="vBassV">60</output></div>
@@ -158,7 +158,6 @@
 <div class="inline">
   <button class="switch" id="drift" role="switch" aria-checked="true"
           aria-label="Drift: the piece plays itself">[ &infin; drift ]</button>
-  <span class="g">while on, the instrument wanders; touch a slider to take it</span>
 </div>
 
 <script>
@@ -251,27 +250,25 @@ function bellBuffer(kind, midi, damp){
   const buf=ctx.createBuffer(1,n,sr); buf.copyToChannel(x,0); return buf;
 }
 function choirBuffer(midi, dur){
-  /* the resultant voice: a small high-string section — three bows, each with
-     its own detune, vibrato rate, and slow pitch drift, plus quiet bow noise,
-     under a warm double lowpass. Sings the emergent line; states nothing. */
-  const sr=ctx.sampleRate, n=Math.floor(sr*(dur+1.2)), f0=hz(midi);
+  /* the resultant voice: a BOWED BELL. Two barely-detuned units of a
+     near-pure tone (strong fundamental, faint 2nd and 3rd partials) beat
+     slowly against each other under a slow swell, with a whisper of bow
+     noise. Bowed metal sings WITH the bells instead of sitting on top. */
+  const sr=ctx.sampleRate, n=Math.floor(sr*(dur+1.6)), f0=hz(midi);
   const out=new Float32Array(n);
-  const voices=[[-0.0042,4.5],[0.0006,4.9],[0.0047,4.2]];
-  for(const [det,vhz] of voices){
-    let ph=Math.random(), drift=0;
-    const vph=Math.random()*6.283;
+  for(const det of [-0.0007, 0.0008]){
+    let ph=Math.random()*6.283, drift=0;
+    const p2=Math.random()*6.283, p3=Math.random()*6.283;
     for(let i=0;i<n;i++){
-      const t=i/sr, von=Math.min(1,Math.max(0,(t-0.35)/0.8));
-      drift=0.999*drift+0.001*(Math.random()*2-1);
-      const cents=11*von*Math.sin(2*Math.PI*vhz*t+vph)+30*drift;
-      ph+=f0*(1+det)*Math.pow(2,cents/1200)/sr;
-      out[i]+=(2*(ph%1)-1)*0.3+(Math.random()*2-1)*0.013;
+      drift=0.9995*drift+0.0005*(Math.random()*2-1);
+      ph+=2*Math.PI*f0*(1+det)*Math.pow(2,4*drift/1200)/sr;
+      out[i]+=0.5*(Math.sin(ph)+0.14*Math.sin(2*ph+p2)+0.05*Math.sin(3*ph+p3))
+             +(Math.random()*2-1)*0.006;
     }
   }
-  lowpass(out,sr,3100); lowpass(out,sr,3100);
-  highpass(out,sr,Math.max(70,f0*0.75));
+  lowpass(out,sr,2800); lowpass(out,sr,2800);
   for(let i=0;i<n;i++){ const t=i/sr;
-    const env=Math.pow(Math.min(1,t/0.9),1.4)*Math.min(1,Math.max(0,(dur+1.2-t)/1.2));
+    const env=Math.pow(Math.min(1,t/1.1),1.5)*Math.min(1,Math.max(0,(dur+1.6-t)/1.6));
     out[i]*=env; }
   let peak=0; for(let i=0;i<n;i++) peak=Math.max(peak,Math.abs(out[i]));
   if(peak>0) for(let i=0;i<n;i++) out[i]/=peak;
