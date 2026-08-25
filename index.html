@@ -1,4 +1,5 @@
 <title>immanence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>
   /* dark-first, after the listening-room reference: near-black, white, one gray */
   :root {
@@ -23,7 +24,7 @@
     --rule: #e4e4e6; --focus: #121212;
     --ochre: #8a6f42; --slate: #5b7484;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
     margin: 0; background: var(--bg); color: var(--s1);
     font-family: Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -82,7 +83,7 @@
   .seg { display: flex; gap: 18px; }
   .seg button, .act, .switch {
     background: transparent; border: 0; padding: 0; font: inherit; cursor: pointer;
-    color: var(--s2);
+    color: var(--s2); touch-action: manipulation;
   }
   .seg button[aria-pressed="true"] { color: var(--s1); }
   .seg button:hover, .act:hover, .switch:hover { color: var(--s1); }
@@ -94,6 +95,18 @@
   }
   .inline { display: flex; gap: 24px; align-items: baseline; flex-wrap: wrap;
             border-bottom: 1px solid var(--rule); padding: 14px 16px; }
+
+  /* coarse pointers: bigger targets, same language */
+  @media (pointer: coarse) {
+    input[type="range"] { height: 32px; }
+    input[type="range"]::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -9.5px; }
+    input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; }
+    .seg button, .act, .switch { padding: 6px 0; }
+  }
+  @media (max-width: 480px) {
+    #viz { height: 220px; }
+    .row.head { flex-direction: column; gap: 4px; }
+  }
 
 </style>
 
@@ -442,6 +455,8 @@ function weatherStep(){
 function tick(){
   if(!running) return;
   const ahead=0.35;
+  /* after background throttling, jump to now rather than replaying the gap */
+  if(nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.1;
   while(nextTime < ctx.currentTime + ahead){
     scheduleBeat(nextTime, beat);
     if(beat%4===0) weatherStep();
@@ -509,7 +524,22 @@ function status(){
 el.begin.addEventListener("click", async ()=>{
   if(running) return;
   ctx=new (window.AudioContext||window.webkitAudioContext)();
+  /* iOS: route through the media channel so the silent switch doesn't mute */
+  try{ if(navigator.audioSession) navigator.audioSession.type="playback"; }catch(e){}
   await ctx.resume();
+  /* iOS suspends on screen lock / interruptions; resume whenever we can */
+  ctx.onstatechange=()=>{ if(ctx.state!=="running" && !document.hidden) ctx.resume(); };
+  document.addEventListener("visibilitychange",()=>{
+    if(!document.hidden && ctx && ctx.state!=="running") ctx.resume();
+  });
+  document.addEventListener("touchend",()=>{
+    if(ctx && ctx.state!=="running") ctx.resume();
+  },{passive:true});
+  /* keep the screen awake while playing — never gate audio startup on it */
+  const grabLock=()=>{ if(navigator.wakeLock)
+    navigator.wakeLock.request("screen").catch(()=>{}); };
+  grabLock();
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) grabLock(); });
   comp=ctx.createDynamicsCompressor();
   comp.threshold.value=-14; comp.ratio.value=3; comp.attack.value=0.01; comp.release.value=0.2;
   dryGain=ctx.createGain(); dryGain.gain.value=0.8;
